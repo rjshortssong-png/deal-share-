@@ -1,0 +1,13 @@
+{
+  "name": "dealshare-backend",
+  "version": "1.1.0",
+  "private": true,
+  "description": "DealShare online marketplace – fully self-hosted, no external API keys",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
