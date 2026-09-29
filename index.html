@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DealShare</title>
+<style>
+:root{--bg:#07101f;--card:#111c2f;--card2:#17243a;--text:#f7f9fc;--muted:#9eabbf;--gold:#e5bd43;--green:#19b875;--line:#263650}
+*{box-sizing:border-box}
+body{margin:0;background:#020712;color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+.app{max-width:480px;min-height:100vh;margin:auto;background:var(--bg);padding-bottom:80px}
+header{padding:18px;border-bottom:1px solid #17243a;position:sticky;top:0;background:#07101ff2;z-index:5}
+.brand{font-size:28px;font-weight:900}.brand b{color:var(--gold)}
+.sub,.muted,.small{color:var(--muted);font-size:13px}
+.page{padding:16px}.hidden{display:none!important}
+.card,.form{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:15px;margin-bottom:13px}
+.hero{background:linear-gradient(145deg,#162945,#0c1728)}
+h2,h3{margin:0 0 9px}
+.row{display:flex;gap:10px}.row>*{flex:1}
+input,textarea,select{width:100%;padding:13px;background:#0b1526;border:1px solid #2b3b55;color:#fff;border-radius:12px;margin:5px 0 10px;outline:none}
+textarea{min-height:90px}label{font-weight:800;font-size:13px}
+.btn{width:100%;padding:13px;border-radius:12px;background:#25344d;color:#fff;font-weight:800;margin-top:8px;border:0;cursor:pointer}
+.primary{background:var(--gold);color:#111}.green{background:var(--green);color:#07130e}.danger{background:#4a2326}
+.search{display:flex;gap:8px}.search input{margin:0}.search button{width:50px;margin:0}
+.chips{display:flex;gap:7px;overflow:auto;padding:9px 0}
+.chip{white-space:nowrap;border:0;background:#17243a;color:#dbe3ef;border-radius:999px;padding:8px 12px;cursor:pointer}
+.chip.active{background:var(--gold);color:#111}
+.product{overflow:hidden}
+.pic{height:190px;border-radius:13px;background:#0b1526;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:11px}
+.pic img{width:100%;height:100%;object-fit:cover}.emoji{font-size:70px}
+.price{font-size:22px;font-weight:900}.mrp{text-decoration:line-through;color:#718096}.off{color:#4fe09d;font-weight:800}
+.tag{display:inline-block;padding:5px 8px;background:#20334e;border-radius:8px;font-size:11px;margin:3px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.bottom{position:fixed;bottom:0;left:50%;transform:translateX(-50%);max-width:480px;width:100%;height:70px;background:#0b1526;border-top:1px solid #263650;display:grid;grid-template-columns:repeat(5,1fr);z-index:10}
+.nav{background:none;color:#8b99ad;font-size:10px;font-weight:800;border:0;cursor:pointer}.nav b{display:block;font-size:20px}.nav.active{color:var(--gold)}
+.toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#101a2b;border:1px solid #32445f;padding:12px 16px;border-radius:12px;z-index:30;max-width:90%;text-align:center}
+.empty{text-align:center;padding:30px;color:var(--muted)}
+.statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:#17243a;padding:12px;border-radius:12px;text-align:center}.stat b{display:block;font-size:20px}
+.status{font-weight:800}.pending{color:#f5c34d}.approved{color:#4fe09d}.rejected{color:#ff7772}
+.toprow{display:flex;justify-content:space-between;align-items:center}
+.preview{max-height:120px;border-radius:10px;margin:8px 0;display:block}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">Deal<b>Share</b></div>
+    <div class="sub">Online Affiliate Marketplace</div>
+  </header>
+  <main id="content"></main>
+  <nav id="nav" class="bottom hidden">
+    <button class="nav active" data-page="home"><b>🏠</b>Home</button>
+    <button class="nav" data-page="saved"><b>❤️</b>Saved</button>
+    <button class="nav" data-page="add"><b>➕</b>Add</button>
+    <button class="nav" data-page="profile"><b>👤</b>Profile</button>
+    <button class="nav" data-page="settings"><b>⚙️</b>Settings</button>
+  </nav>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+let me = null, products = [], saved = new Set(), cat = 'All';
+
+const $ = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+  }[m]));
+}
+
+function toast(s) {
+  const t = $('toast');
+  t.textContent = s;
+  t.classList.remove('hidden');
+  clearTimeout(window.tt);
+  window.tt = setTimeout(() => t.classList.add('hidden'), 2200);
+}
+
+async function api(url, opt = {}) {
+  const r = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(opt.headers || {}) },
+    ...opt
+  });
+  let d = {};
+  try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+
+async function boot() {
+  try {
+    const d = await api('/api/me');
+    me = d.user;
+    if (!me) return auth('login');
+    $('nav').classList.remove('hidden');
+    await loadProducts();
+    go('home');
+  } catch {
+    auth('login');
+  }
+}
+
+function auth(mode) {
+  $('nav').classList.add('hidden');
+  $('content').innerHTML = `
+    <div class="card hero" style="text-align:center;margin-top:25px">
+      <div style="font-size:50px">🛍️</div>
+      <h2>DealShare</h2>
+      <p class="muted">Real online account — apna deal community ke saath share karo.</p>
+    </div>
+    <div class="form">
+      <div class="grid">
+        <button class="btn ${mode === 'login' ? 'primary' : ''}" onclick="auth('login')">Login</button>
+        <button class="btn ${mode === 'signup' ? 'primary' : ''}" onclick="auth('signup')">Create Account</button>
+      </div>
+      <div id="af"></div>
+    </div>
+    <div class="card">
+      <b>☁️ Online Backend</b>
+      <p class="muted">Ye version external API key / Supabase ke bina apne Node.js backend se connect hota hai.</p>
+    </div>`;
+  const f = $('af');
+  if (mode === 'login') {
+    f.innerHTML = `
+      <label>Email</label><input id="email" type="email" placeholder="you@example.com">
+      <label>Password</label><input id="pass" type="password" placeholder="Password">
+      <button class="btn primary" onclick="login()">Login</button>`;
+  } else {
+    f.innerHTML = `
+      <label>Name</label><input id="name" placeholder="Your name">
+      <label>Email</label><input id="email" type="email" placeholder="you@example.com">
+      <label>Password</label><input id="pass" type="password" placeholder="At least 4 characters">
+      <button class="btn primary" onclick="signup()">Create Account</button>`;
+  }
+}
+
+async function signup() {
+  try {
+    const d = await api('/api/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: $('name').value,
+        email: $('email').value,
+        password: $('pass').value
+      })
+    });
+    me = d.user;
+    toast('Account created!');
+    await afterLogin();
+  } catch (e) { toast(e.message); }
+}
+
+async function login() {
+  try {
+    const d = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: $('email').value,
+        password: $('pass').value
+      })
+    });
+    me = d.user;
+    toast('Login successful!');
+    await afterLogin();
+  } catch (e) { toast(e.message); }
+}
+
+async function afterLogin() {
+  $('nav').classList.remove('hidden');
+  await loadProducts();
+  go('home');
+}
+
+async function loadProducts() {
+  const d = await api('/api/products');
+  products = d.products;
+  try {
+    const f = await api('/api/favorites');
+    saved = new Set(f.ids);
+  } catch { saved = new Set(); }
+  renderHome();
+}
+
+function go(pageId) {
+  document.querySelectorAll('.page').forEach(x => x.classList.add('hidden'));
+  const p = $(pageId);
+  if (p) p.classList.remove('hidden');
+  document.querySelectorAll('.nav').forEach(x => {
+    x.classList.toggle('active', x.dataset.page === pageId);
+  });
+  window.scrollTo(0, 0);
+
+  if (pageId === 'saved') loadSaved();
+  if (pageId === 'add') addForm();
+  if (pageId === 'profile') loadProfile();
+  if (pageId === 'settings') showSettings();
+}
+
+function homeTemplate() {
+  return `
+    <section id="home" class="page">
+      <div class="card hero">
+        <h2>Hi, ${esc(me.name)} 👋</h2>
+        <p class="muted">Online community ke latest approved deals.</p>
+      </div>
+      <div class="search">
+        <input id="q" placeholder="Search products..." oninput="renderFeed()">
+        <button class="btn primary" onclick="renderFeed()">🔎</button>
+      </div>
+      <div id="cats" class="chips"></div>
+      <div class="toprow">
+        <h2>Latest Deals</h2>
+        <span id="count" class="small"></span>
+      </div>
+      <div id="feed"></div>
+    </section>`;
+}
+
+function renderHome() {
+  if (!$('home')) {
+    $('content').innerHTML =
+      homeTemplate() +
+      `<section id="saved" class="page hidden"></section>
+       <section id="add" class="page hidden"></section>
+       <section id="profile" class="page hidden"></section>
+       <section id="settings" class="page hidden"></section>`;
+  }
+  const cats = ['All', ...new Set(products.map(p => p.category).filter(Boolean))];
+  $('cats').innerHTML = cats.map(x =>
+    `<button class="chip ${x === cat ? 'active' : ''}" onclick="setCat('${esc(x)}')">${esc(x)}</button>`
+  ).join('');
+  renderFeed();
+}
+
+function setCat(x) {
+  cat = x;
+  renderHome();
+}
+
+function renderFeed() {
+  const q = ($('q')?.value || '').toLowerCase();
+  const arr = products.filter(p =>
+    (cat === 'All' || p.category === cat) &&
+    (!q || (p.title + ' ' + p.description + ' ' + p.tags + ' ' + p.store).toLowerCase().includes(q))
+  );
+  $('count').textContent = arr.length + ' products';
+  $('feed').innerHTML = arr.length
+    ? arr.map(card).join('')
+    : '<div class="empty">No products found.</div>';
+}
+
+function card(p) {
+  const off = p.mrp && p.price && p.mrp > p.price
+    ? Math.round((1 - p.price / p.mrp) * 100)
+    : 0;
+  return `
+    <div class="card product">
+      <div class="pic">
+        ${p.image ? `<img src="${esc(p.image)}" alt="">` : '<div class="emoji">🛍️</div>'}
+      </div>
+      <div class="toprow">
+        <h3>${esc(p.title)}</h3>
+        <b>⭐ ${Number(p.rating || 0).toFixed(1)}</b>
+      </div>
+      <p class="muted">${esc(p.description || '')}</p>
+      <div class="row">
+        <span class="price">₹${Number(p.price || 0).toLocaleString('en-IN')}</span>
+        <span class="mrp">${p.mrp ? '₹' + Number(p.mrp).toLocaleString('en-IN') : ''}</span>
+        <span class="off">${off ? off + '% OFF' : ''}</span>
+      </div>
+      <div>
+        <span class="tag">${esc(p.category || 'Other')}</span>
+        <span class="tag">🏪 ${esc(p.store || 'Store')}</span>
+        <span class="tag status ${p.status}">${esc(p.status)}</span>
+      </div>
+      <button class="btn primary" onclick="buy('${p.id}')">🛒 Buy Now</button>
+      <div class="grid">
+        <button class="btn" onclick="toggleSave('${p.id}')">${saved.has(p.id) ? '❤️ Saved' : '♡ Save'}</button>
+        <button class="btn" onclick="share('${p.id}')">📤 Share</button>
+      </div>
+      ${p.ownerId === me.id ? `
+        <div class="grid">
+          <button class="btn" onclick="edit('${p.id}')">✏️ Edit</button>
+          <button class="btn danger" onclick="del('${p.id}')">🗑️ Delete</button>
+        </div>` : ''}
+    </div>`;
+}
+
+async function buy(id) {
+  const p = products.find(x => x.id === id);
+  if (!p) return;
+  try {
+    await api('/api/clicks', { method: 'POST', body: JSON.stringify({ productId: id }) });
+  } catch {}
+  if (p.affiliate_url) {
+    window.open(p.affiliate_url, '_blank');
+  } else {
+    toast('Buy link unavailable');
+  }
+}
+
+async function toggleSave(id) {
+  try {
+    if (saved.has(id)) {
+      await api('/api/favorites', { method: 'DELETE', body: JSON.stringify({ productId: id }) });
+      saved.delete(id);
+    } else {
+      await api('/api/favorites', { method: 'POST', body: JSON.stringify({ productId: id }) });
+      saved.add(id);
+    }
+    renderFeed();
+    if ($('saved') && !$('saved').classList.contains('hidden')) loadSaved();
+  } catch (e) { toast(e.message); }
+}
+
+async function share(id) {
+  const p = products.find(x => x.id === id);
+  if (!p) return;
+  const txt = `${p.title} — ₹${p.price}\n${p.affiliate_url || ''}`;
+  if (navigator.share) {
+    try { await navigator.share({ title: p.title, text: txt }); } catch {}
+  } else if (navigator.clipboard) {
+    await navigator.clipboard.writeText(txt);
+    toast('Copied!');
+  }
+}
+
+async function loadSaved() {
+  await loadProducts();
+  const list = products.filter(p => saved.has(p.id));
+  $('saved').innerHTML =
+    '<h2>❤️ Saved Products</h2>' +
+    (list.length ? list.map(card).join('') : '<div class="empty">No saved products.</div>');
+}
+
+function addForm(p = null) {
+  go('add');
+  $('add').innerHTML = `
+    <h2>${p ? '✏️ Edit Product' : '➕ Add Product'}</h2>
+    <div class="form">
+      <label>Product Photo</label>
+      <input id="photo" type="file" accept="image/*" onchange="previewPhoto()">
+      <img id="photoPreview" class="preview hidden" alt="preview">
+      ${p && p.image ? `<p class="small">Current: <img src="${esc(p.image)}" style="height:40px;border-radius:6px;vertical-align:middle"></p>` : ''}
+      <label>Product Title *</label>
+      <input id="title" value="${esc(p?.title || '')}">
+      <div class="row">
+        <div>
+          <label>Selling Price *</label>
+          <input id="price" type="number" value="${p?.price ?? ''}">
+        </div>
+        <div>
+          <label>MRP</label>
+          <input id="mrp" type="number" value="${p?.mrp ?? ''}">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Rating</label>
+          <input id="rating" type="number" step="0.1" min="0" max="5" value="${p?.rating ?? ''}">
+        </div>
+        <div>
+          <label>Category</label>
+          <input id="category" value="${esc(p?.category || 'Other')}">
+        </div>
+      </div>
+      <label>Store / Brand</label>
+      <input id="store" value="${esc(p?.store || '')}">
+      <label>Affiliate / Buy URL</label>
+      <input id="url" value="${esc(p?.affiliate_url || '')}" placeholder="https://...">
+      <label>Delivery</label>
+      <input id="delivery" value="${esc(p?.delivery || '')}">
+      <label>Colors</label>
+      <input id="colors" value="${esc(p?.colors || '')}">
+      <label>Sizes</label>
+      <input id="sizes" value="${esc(p?.sizes || '')}">
+      <label>Features</label>
+      <textarea id="features">${esc(p?.features || '')}</textarea>
+      <label>Description</label>
+      <textarea id="description">${esc(p?.description || '')}</textarea>
+      <label>Tags</label>
+      <input id="tags" value="${esc(p?.tags || '')}">
+      <button class="btn primary" onclick="saveProduct(${p ? `'${p.id}'` : 'null'})">
+        ${p ? 'Save Changes' : '🚀 Submit Product'}
+      </button>
+    </div>`;
+}
+
+function previewPhoto() {
+  const f = $('photo').files[0];
+  const img = $('photoPreview');
+  if (!f) { img.classList.add('hidden'); return; }
+  const r = new FileReader();
+  r.onload = () => {
+    img.src = r.result;
+    img.classList.remove('hidden');
+  };
+  r.readAsDataURL(f);
+}
+
+async function upload() {
+  const f = $('photo').files[0];
+  if (!f) return '';
+  if (f.size > 5 * 1024 * 1024) throw new Error('Photo max 5MB');
+  const data = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+  const d = await api('/api/upload', {
+    method: 'POST',
+    body: JSON.stringify({ data })
+  });
+  // Return only the filename (backend stores filename)
+  return d.file || (d.url ? d.url.split('/').pop() : '');
+}
+
+async function saveProduct(id) {
+  try {
+    const imageFile = await upload(); // filename or ''
+    const b = {
+      title: $('title').value.trim(),
+      price: Number($('price').value),
+      mrp: $('mrp').value ? Number($('mrp').value) : null,
+      rating: $('rating').value ? Number($('rating').value) : null,
+      category: $('category').value,
+      store: $('store').value,
+      affiliate_url: $('url').value,
+      delivery: $('delivery').value,
+      colors: $('colors').value,
+      sizes: $('sizes').value,
+      features: $('features').value,
+      description: $('description').value,
+      tags: $('tags').value
+    };
+    if (!b.title || !b.price) throw new Error('Title aur price bharo');
+    if (imageFile) b.image = imageFile; // only send if new photo selected
+
+    if (id) {
+      await api('/api/products/' + id, { method: 'PUT', body: JSON.stringify(b) });
+    } else {
+      await api('/api/products', { method: 'POST', body: JSON.stringify(b) });
+    }
+    toast('Product submitted! Admin approval ke baad public feed mein dikhega.');
+    await loadProducts();
+    go('home');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function edit(id) {
+  const p = products.find(x => x.id === id);
+  if (p) addForm(p);
+}
+
+async function del(id) {
+  if (!confirm('Delete product?')) return;
+  try {
+    await api('/api/products/' + id, { method: 'DELETE' });
+    toast('Deleted');
+    await loadProducts();
+    go('home');
+  } catch (e) { toast(e.message); }
+}
+
+async function loadProfile() {
+  const c = $('profile');
+  const mine = products.filter(p => p.ownerId === me.id);
+  let cr = { count: 0 };
+  try { cr = await api('/api/clicks/mine'); } catch {}
+  c.innerHTML = `
+    <h2>👤 Profile</h2>
+    <div class="card">
+      <h2>${esc(me.name)}</h2>
+      <p class="muted">${esc(me.email)}</p>
+      <div class="statgrid">
+        <div class="stat"><b>${mine.length}</b>Products</div>
+        <div class="stat"><b>${cr.count || 0}</b>Clicks</div>
+        <div class="stat"><b>${saved.size}</b>Saved</div>
+      </div>
+    </div>
+    <div class="form">
+      <label>Name</label>
+      <input id="pname" value="${esc(me.name)}">
+      <label>Avatar URL</label>
+      <input id="pavatar" value="${esc(me.avatar || '')}">
+      <button class="btn primary" onclick="saveProfile()">Save Profile</button>
+    </div>
+    ${me.role === 'admin' ? `
+      <div class="form">
+        <button class="btn" onclick="admin()">👑 Admin Dashboard</button>
+      </div>` : ''}`;
+}
+
+async function saveProfile() {
+  try {
+    const d = await api('/api/profile', {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: $('pname').value,
+        avatar: $('pavatar').value
+      })
+    });
+    me = d.user;
+    toast('Profile saved');
+    loadProfile();
+  } catch (e) { toast(e.message); }
+}
+
+async function admin() {
+  go('settings');
+  const d = await api('/api/admin/products');
+  let html = '<h2>👑 Admin Dashboard</h2>';
+  for (const p of d.products) {
+    html += `
+      <div class="card">
+        <b>${esc(p.title)}</b>
+        <p class="small">${esc(p.status)} · ${esc(p.store)}</p>
+        <div class="grid">
+          <button class="btn green" onclick="status('${p.id}','approved')">Approve</button>
+          <button class="btn danger" onclick="status('${p.id}','rejected')">Reject</button>
+        </div>
+      </div>`;
+  }
+  $('settings').innerHTML = html +
+    `<button class="btn" onclick="go('home')">← Back to Home</button>`;
+}
+
+async function status(id, s) {
+  try {
+    await api('/api/admin/products/' + id, {
+      method: 'PUT',
+      body: JSON.stringify({ status: s })
+    });
+    toast('Status updated');
+    admin();
+  } catch (e) { toast(e.message); }
+}
+
+function showSettings() {
+  $('settings').innerHTML = `
+    <h2>⚙️ Settings</h2>
+    <div class="form">
+      <h3>Account</h3>
+      <p>${esc(me.name)}<br><span class="muted">${esc(me.email)}</span></p>
+      <button class="btn danger" onclick="logout()">🚪 Logout</button>
+    </div>
+    <div class="form">
+      <h3>☁️ Online Backend</h3>
+      <p class="muted">DealShare is connected to its Node.js backend. No Supabase / API key is required.</p>
+    </div>`;
+}
+
+async function logout() {
+  await api('/api/logout', { method: 'POST' });
+  location.reload();
+}
+
+// Nav click handlers
+document.getElementById('nav').addEventListener('click', e => {
+  const btn = e.target.closest('.nav');
+  if (!btn) return;
+  go(btn.dataset.page);
+});
+
+boot();
+</script>
+</body>
+</html>
